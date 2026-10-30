@@ -7,7 +7,8 @@ from typing import List, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from pyatv import exceptions
-from pyatv.protocols.airplay.auth import pair_verify
+from pyatv.auth.hap_pairing import AuthenticationType, NO_CREDENTIALS
+from pyatv.protocols.airplay.auth import verify_connection
 from pyatv.protocols.raop.protocols import StreamContext, StreamProtocol
 from pyatv.support.rtsp import RtspSession
 
@@ -44,10 +45,28 @@ class AirPlayV1(StreamProtocol):
         self.rtsp = rtsp
         self._keep_alive_task: Optional[asyncio.Future] = None
 
+    def requires_info(self, properties: Mapping[str, str]) -> bool:
+        """Open classic RAOP does not negotiate an AirPlay 2 control channel."""
+        try:
+            encryption = {int(value) for value in properties.get("et", "").split(",")}
+            flags = int(properties.get("sf", "0"), 16)
+        except ValueError:
+            return True
+        if (
+            0 in encryption
+            and not flags & (1 << 7)
+            and properties.get("pw", "false").lower() != "true"
+            and not self.context.password
+            and self.context.credentials.type == AuthenticationType.Transient
+        ):
+            self.context.credentials = NO_CREDENTIALS
+            _LOGGER.debug("Open classic RAOP: no /info or transient pairing")
+            return False
+        return True
+
     async def setup(self, timing_server_port: int, control_client_port: int) -> None:
         """To setup connection prior to starting to stream."""
-        verifier = pair_verify(self.context.credentials, self.rtsp.connection)
-        await verifier.verify_credentials()
+        await verify_connection(self.context.credentials, self.rtsp.connection)
 
         await self.rtsp.announce(
             self.context.bytes_per_channel,
@@ -118,8 +137,7 @@ class AirPlayV1(StreamProtocol):
 
     async def play_url(self, timing_server_port: int, url: str, position: float = 0.0):
         """Play media from a URL."""
-        verifier = pair_verify(self.context.credentials, self.rtsp.connection)
-        await verifier.verify_credentials()
+        await verify_connection(self.context.credentials, self.rtsp.connection)
 
         body = {
             "Content-Location": url,
@@ -131,7 +149,8 @@ class AirPlayV1(StreamProtocol):
             "/play",
             headers=HEADERS,
             body=plistlib.dumps(
-                body, fmt=plistlib.FMT_BINARY  # pylint: disable=no-member
+                body,
+                fmt=plistlib.FMT_BINARY,  # pylint: disable=no-member
             ),
             allow_error=True,
         )

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 import asyncio
 import logging
 from random import randrange
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 from pyatv.auth.hap_pairing import NO_CREDENTIALS, HapCredentials
 from pyatv.protocols.raop import timing
@@ -75,6 +75,10 @@ class StreamContext:
 
 class StreamProtocol(ABC):
     """Base interface for a streaming protocol."""
+
+    def requires_info(self, properties: Mapping[str, str]) -> bool:
+        """Whether initialization needs the AirPlay /info exchange."""
+        return True
 
     @abstractmethod
     async def setup(self, timing_server_port: int, control_client_port: int) -> None:

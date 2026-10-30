@@ -327,7 +327,8 @@ class StreamClient:
             self.timing_server.port,
         )
 
-        self._info.update(await self.rtsp.info())
+        if self._protocol.requires_info(properties):
+            self._info.update(await self.rtsp.info())
         _LOGGER.debug("Updated info parameters to: %s", self.info)
 
         # Handle some special authentication cases
