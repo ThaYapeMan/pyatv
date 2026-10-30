@@ -17,6 +17,7 @@ from pyatv.auth.hap_srp import SRPAuthHandler, hkdf_expand
 from pyatv.exceptions import InvalidResponseError
 from pyatv.support import log_binary
 from pyatv.support.http import HttpConnection, HttpResponse
+from pyatv.support.rtsp import RtspSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,13 +41,21 @@ class AirPlayHapTransientPairVerifyProcedure(PairVerifyProcedure):
     ):
         """Initialize a new AuthenticationVerifier."""
         self.http = http
+        self.rtsp = RtspSession(http)
         self.srp = auth_handler
 
     async def verify_credentials(self) -> bool:
-        """Verify if device is allowed to use AirPlau."""
+        """Verify if device is allowed to use AirPlay."""
         self.srp.initialize()
 
-        await self.http.post("/pair-pin-start", headers=_AIRPLAY_HEADERS)
+        # A transient session uses the fixed PIN, not an on-screen PIN.
+        # Only start PIN presentation when the receiver explicitly requires it.
+        # The statusFlags from /info are not the Bonjour pairing flags.
+        info = await self.rtsp.info()
+        if int(info.get("statusFlags", 0)) & (1 << 7):
+            await self.rtsp.exchange(
+                "POST", "/pair-pin-start", headers=_AIRPLAY_HEADERS
+            )
 
         data = {
             hap_tlv8.TlvValue.Method: b"\x00",
@@ -55,8 +64,11 @@ class AirPlayHapTransientPairVerifyProcedure(PairVerifyProcedure):
                 hap_tlv8.Flags.TransientPairing.value, 1, byteorder="big"
             ),
         }
-        resp = await self.http.post(
-            "/pair-setup", body=hap_tlv8.write_tlv(data), headers=_AIRPLAY_HEADERS
+        resp = await self.rtsp.exchange(
+            "POST",
+            "/pair-setup",
+            body=hap_tlv8.write_tlv(data),
+            headers=_AIRPLAY_HEADERS,
         )
 
         if not isinstance(resp.body, bytes):
@@ -75,8 +87,11 @@ class AirPlayHapTransientPairVerifyProcedure(PairVerifyProcedure):
             hap_tlv8.TlvValue.PublicKey: pub_key,
             hap_tlv8.TlvValue.Proof: proof,
         }
-        await self.http.post(
-            "/pair-setup", body=hap_tlv8.write_tlv(data), headers=_AIRPLAY_HEADERS
+        await self.rtsp.exchange(
+            "POST",
+            "/pair-setup",
+            body=hap_tlv8.write_tlv(data),
+            headers=_AIRPLAY_HEADERS,
         )
 
         return True
